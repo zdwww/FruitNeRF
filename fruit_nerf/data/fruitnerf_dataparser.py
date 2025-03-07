@@ -167,23 +167,44 @@ class FruitNerf(DataParser):
             indices = np.array(indices, dtype=np.int32)
         elif has_split_files_spec:
             raise RuntimeError(f"The dataset's list of filenames for split {split} is missing.")
+        # else:
+        #     # filter image_filenames and poses based on train/eval split percentage
+        #     num_images = len(image_filenames)
+        #     num_train_images = math.ceil(num_images * self.config.train_split_fraction)
+        #     num_eval_images = num_images - num_train_images
+        #     i_all = np.arange(num_images)
+        #     i_train = np.linspace(
+        #         0, num_images - 1, num_train_images, dtype=int
+        #     )  # equally spaced training images starting and ending at 0 and num_images-1
+        #     i_eval = np.setdiff1d(i_all, i_train)  # eval images are the remaining images
+        #     assert len(i_eval) == num_eval_images
+        #     if split == "train":
+        #         indices = i_train
+        #     elif split in ["val", "test"]:
+        #         indices = i_eval
+        #     else:
+        #         raise ValueError(f"Unknown dataparser split {split}")
         else:
-            # filter image_filenames and poses based on train/eval split percentage
+            ####### Begin of New Data Train/Test Split #######
             num_images = len(image_filenames)
-            num_train_images = math.ceil(num_images * self.config.train_split_fraction)
-            num_eval_images = num_images - num_train_images
+            image_names = [path.name for path in image_filenames]
+            CONSOLE.log(f"Start customized train/test split on {num_images} images: {image_names}")
+            last_parts = [int(path.stem.split("_")[-1]) for path in image_filenames]
             i_all = np.arange(num_images)
-            i_train = np.linspace(
-                0, num_images - 1, num_train_images, dtype=int
-            )  # equally spaced training images starting and ending at 0 and num_images-1
-            i_eval = np.setdiff1d(i_all, i_train)  # eval images are the remaining images
-            assert len(i_eval) == num_eval_images
+            i_train = [i for i, v in enumerate(last_parts) if v <= 10]
+            num_train_images = len(i_train)
+            i_eval = [i for i, v in enumerate(last_parts) if v > 10]
+            num_eval_images = len(i_eval)
+            assert len(i_all) == len(i_train) + len(i_eval)
             if split == "train":
                 indices = i_train
+                CONSOLE.log(f"{num_train_images} TRAIN indices {indices}, {[image_names[i] for i in indices]}")
             elif split in ["val", "test"]:
                 indices = i_eval
+                CONSOLE.log(f"{num_eval_images} TEST indices {indices}, {[image_names[i] for i in indices]}")
             else:
                 raise ValueError(f"Unknown dataparser split {split}")
+            ####### End of New Data Train/Test Split #######
 
         if "orientation_override" in meta:
             orientation_method = meta["orientation_override"]
