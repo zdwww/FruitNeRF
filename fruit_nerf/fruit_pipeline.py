@@ -17,6 +17,7 @@ Abstracts for the Pipeline class.
 """
 from __future__ import annotations
 
+import os
 import typing
 from abc import abstractmethod
 from dataclasses import dataclass, field
@@ -145,6 +146,22 @@ class FruitPipeline(Pipeline):
 
         return model_outputs, loss_dict, metrics_dict
 
+    # @profiler.time_function
+    # def get_eval_loss_dict(self, step: int):
+    #     """This function gets your evaluation loss dict. It needs to get the data
+    #     from the DataManager and feed it to the model's forward function
+
+    #     Args:
+    #         step: current iteration step
+    #     """
+    #     self.eval()
+    #     ray_bundle, batch = self.datamanager.next_eval(step)
+    #     model_outputs = self.model(ray_bundle) # without batch
+    #     metrics_dict = self.model.get_metrics_dict(model_outputs, batch)
+    #     loss_dict = self.model.get_loss_dict(model_outputs, batch, metrics_dict)
+    #     self.train()
+    #     return model_outputs, loss_dict, metrics_dict
+
     def forward(self):
         """Blank forward method
 
@@ -218,6 +235,67 @@ class FruitPipeline(Pipeline):
                 metrics_dict_list.append(metrics_dict)
                 progress.advance(task)
         # average the metrics list
+        metrics_dict = {}
+        for key in metrics_dict_list[0].keys():
+            metrics_dict[key] = float(
+                torch.mean(torch.tensor([metrics_dict[key] for metrics_dict in metrics_dict_list]))
+            )
+        self.train()
+        return metrics_dict
+
+    @profiler.time_function
+    def get_fruitnerf_eval(self, output_path: Optional[Path] = None):
+        """
+        Evaluating fruitnerf results with rendered image and semantics saved
+        """
+        self.eval()
+        metrics_dict_list = []
+        assert isinstance(self.datamanager, VanillaDataManager)
+        num_images = len(self.datamanager.fixed_indices_eval_dataloader)
+        print(f"Start evaluating on {num_images} images...")
+        with Progress(
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                TimeElapsedColumn(),
+                MofNCompleteColumn(),
+                transient=True,
+        ) as progress:
+            task = progress.add_task("[green]Evaluating all eval images...", total=num_images)
+            for camera_ray_bundle, batch in self.datamanager.fixed_indices_eval_dataloader:
+                # time this the following line
+                inner_start = time()
+                height, width = camera_ray_bundle.shape
+                num_rays = height * width
+                outputs = self.model.get_outputs_for_camera_ray_bundle(camera_ray_bundle)
+                metrics_dict, images_dict = self.model.get_image_metrics_and_images(outputs, batch)
+                img = batch["image"]
+                rgb = outputs["rgb"] # output rgb
+                semantics_sigmoid = torch.sigmoid(outputs["semantics"])
+                semantics_softmax = torch.nn.functional.softmax(outputs["semantics"])
+                print(rgb.shape, semantics_sigmoid.shape, semantics_softmax.shape)
+
+                if output_path is not None:
+                    camera_indices = camera_ray_bundle.camera_indices
+                    assert camera_indices is not None
+                    Image.fromarray((img * 255).cpu().byte().numpy(), mode="RGB").save(
+                        os.path.join(output_path, "{0:03d}-{1}.png".format(int(camera_indices[0, 0, 0]), "img"))
+                    )
+                    Image.fromarray((rgb * 255).cpu().byte().numpy(), mode="RGB").save(
+                        os.path.join(output_path, "{0:03d}-{1}.png".format(int(camera_indices[0, 0, 0]), "rgb"))
+                    )
+                    Image.fromarray((semantics_sigmoid.squeeze() * 255).cpu().byte().numpy(), mode="L").save(
+                        os.path.join(output_path, "{0:03d}-{1}.png".format(int(camera_indices[0, 0, 0]), "sigmoid"))
+                    )
+                    Image.fromarray((semantics_softmax.squeeze() * 255).cpu().byte().numpy(), mode="L").save(
+                        os.path.join(output_path, "{0:03d}-{1}.png".format(int(camera_indices[0, 0, 0]), "softmax"))
+                    )
+                assert "num_rays_per_sec" not in metrics_dict
+                metrics_dict["num_rays_per_sec"] = num_rays / (time() - inner_start)
+                fps_str = "fps"
+                assert fps_str not in metrics_dict
+                metrics_dict[fps_str] = metrics_dict["num_rays_per_sec"] / (height * width)
+                metrics_dict_list.append(metrics_dict)
+                progress.advance(task)
         metrics_dict = {}
         for key in metrics_dict_list[0].keys():
             metrics_dict[key] = float(

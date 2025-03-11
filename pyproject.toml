@@ -30,3 +30,4 @@ fruit_nerf_huge = 'fruit_nerf.fruit_nerf_config:fruit_nerf_method_huge'
 # Note, add entrypoint name to nerfstudio/scripts/completions/install.py to include CLI completion
 ns-export-semantics = "fruit_nerf.scripts.exporter:entrypoint"
 ns-process-fruit-data = "fruit_nerf.scripts.process_data:entrypoint"
+ns-eval-fruit = "fruit_nerf.scripts.eval:entrypoint"
